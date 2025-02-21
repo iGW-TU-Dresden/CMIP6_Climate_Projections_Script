@@ -18,8 +18,6 @@ The Rmd scripts are dynamic documents that combine narrative text with code chun
 3. Downloading the datasets of interest.
 4. Preprocessing the NetCDF files for either a shapefile or a list of coordinates.
 
-**Note:** To run the script, please download the attached file 'download_links_df.csv' and save it to your local folder. This file contains direct links to download the daily and monthly NetCDF files from the ISIMIP repository.
-
 ## About R and RStudio
 
 **i. Download and Install**
