@@ -1,0 +1,324 @@
+# ISIMIP Project: Download and Data Preprocessing
+
+The **Inter-Sectoral Impact Model Intercomparison Project** develops and provides climate and socioeconomic forcing datasets with a spatial resolution of 1 degree, along with climate projections under SSP-RCP scenarios from 2015 to 2100.
+
+The datasets from the ISIMIP3b protocol provide bias-corrected CMIP6 climate forcing for historical data and SSP1-RCP2.6, SSP3-RCP7.0, and SSP5-RCP8.5 conditions. The bias adjustment corrects the simulated data based on corrected ERA5 observational data (W5E5).
+
+More information: <https://www.isimip.org/about/>
+
+Try executing the chunks by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*.
+
+### Install or activate the required libraries
+
+```{r}
+#install.packages(c("utils", "ecmwfr", "gtools", "ncdf4", "ncdf4.helpers", "reshape2", "tidyverse", "sf"))
+
+library(utils)
+library(ecmwfr)
+library(gtools)
+library(ncdf4)
+library(ncdf4.helpers)
+library(reshape2)
+library(tidyverse)
+library(sf)
+```
+
+## 1. Set working directory
+
+In the next step, you can choose the folder where the results will be stored.
+
+```{r}
+# Set the directory for data storage
+user_wd <- readline(prompt = "Please enter your directory path: ")
+user_wd <- gsub('"', '', user_wd); user_wd <- gsub('\\\\','/',user_wd)
+
+while (!dir.exists(user_wd)) {
+  print("Invalid directory. Please enter a valid one.")
+  user_wd <- readline(prompt = "Please enter your directory path: ")
+  user_wd <- gsub('"', '', user_wd); user_wd <- gsub('\\\\','/',user_wd)
+}
+print(paste("You entered a valid directory:", user_wd))
+```
+
+## 2. Enter the variable, time frame, and SSP climate change scenario of your interest
+
+This code prompts the user to select a variable (precipitation, temperature, or evapotranspiration), a time frame (historical or future), and, if applicable, an SSP scenario (ssp126, ssp370, ssp585, or all).
+
+### Scenarios
+
+-   **historical**: GCM-based historical climate-related forcing, historical changes in CO2 and CH4 concentrations.
+-   **ssp126**: GCM-based climate-related forcing according to SSP1-2.6.
+-   **ssp370**: GCM-based climate-related forcing according to SSP3-7.0.
+-   **ssp585**: GCM-based climate-related forcing according to SSP5-8.5.
+
+```{r}
+# Read csv file with links to NetCDF files
+file <- paste0("/link_list.csv")
+link_list <- read.csv(paste0(user_wd, file))
+
+# Function to ask for valid input
+ask_input <- function(prompt, valid_options) {
+  repeat {
+    input <- readline(prompt)
+    if (input %in% valid_options) return(input)
+    cat("Invalid input. Please choose from:", paste(valid_options, collapse = ", "), "\n")
+  }
+}
+
+# Get valid input for variable and scenario
+variable <- ask_input("Which variable are you interested in: Precipitation 'pr', Temperature 'tas', or Evapotranspiration 'potevap'? ", c("pr", "tas", "potevap"))
+time_frame <- ask_input("Which time frame are you interested in: historical (1850-2014) or future (2015-2100)? ", c("historical", "future"))
+
+# Set ssp_scenario to historical if time_frame is historical, otherwise ask for SSP scenario if time_frame is future
+ssp_scenario <- if (time_frame == "historical") {
+  "historical"  # Automatically set to historical if time frame is historical
+} else {
+  ask_input("Which SSP climate change scenario(s) are you interested in (ssp126, ssp370, ssp585, or all)? ", c("ssp126", "ssp370", "ssp585", "all"))
+}
+
+# Filter the data based on the user's input
+if (ssp_scenario == "all") {
+  # If 'all' is chosen, select any of the SSP scenarios
+  filtered_df <- link_list[link_list$variable == variable & link_list$scenario %in% c("ssp126", "ssp370", "ssp585"), ]
+} else {
+  # If a specific SSP or historical scenario is chosen, filter for that scenario only
+  filtered_df <- link_list[link_list$variable == variable & link_list$scenario == ssp_scenario, ]
+}
+
+# Output the user's choices
+cat("You selected the variable:", variable, "\n")
+cat("You selected the time frame:", time_frame, "\n")
+cat("You selected the SSP scenario:", ssp_scenario, "\n")
+
+# Create destination folder
+temp_folder <- paste0("temp_", variable, "_", ssp_scenario)
+temp_wd <- file.path(user_wd, temp_folder)
+
+# Create the folder if it doesn't exist
+if (!dir.exists(temp_wd)) {
+  dir.create(temp_wd)
+}
+
+cat("Temp folder successfully created in working directory at:", user_wd, "\n")
+```
+
+## 3. Set paths to shapefile or csv with set of coordinates
+
+In the next step, you can either select a shapefile representing the region (polygon) of interest or choose a CSV file containing the coordinates of interest.
+
+```{r}
+# Set the path to a. shapefile or b. CSV file with coordinates 
+user_choice <- readline(prompt = "Please enter 'a' to input the location of your shapefile or 'b' to for CSV with coordinates: ")
+
+if (tolower(user_choice) == "a") {
+  # Read shapefile
+  shp_path <- readline(prompt = "Please enter the path to your shapefile. Example: path/to/your/folder/polygon.shp :")
+  shp_path <- gsub('"', '', shp_path); shp_path <- gsub('\\\\','/',shp_path)
+
+  while (!file.exists(shp_path)) {
+    print("Invalid file path. Please enter a valid one.")
+    shp_path <- readline(prompt = "Please enter the path to your shapefile. Example: path/to/your/folder/polygon.shp :")
+    shp_path <- gsub('"', '', shp_path); shp_path <- gsub('\\\\','/',shp_path)
+  }
+
+  shp <- st_read(shp_path)
+  print(paste("You entered a valid path for the shapefile:", shp_path))
+
+} else if (tolower(user_choice) == "b") {
+  # Read CSV
+  coord_path <- readline(prompt = "Please enter the path to your CSV with coordinates. Format: two columns latitude longitude. Example: path/to/your/folder/coordinates.csv :")
+  coord_path <- gsub('"', '', coord_path); coord_path <- gsub('\\\\','/',coord_path)
+
+  while (!file.exists(coord_path)) {
+    print("Invalid file path. Please enter a valid one.")
+    coord_path <- readline(prompt = "Please enter the path to your CSV with coordinates. 
+                           Format: two columns latitude longitude. Example: path/to/your/folder/coordinates.csv :")
+    coord_path <- gsub('"', '', coord_path); coord_path <- gsub('\\\\','/',coord_path)
+  }
+
+  coord_df <- read.csv(coord_path)
+  print(paste("You entered a valid path for the CSV file:", coord_path))
+
+} else {
+  cat("Invalid choice. Please enter 'a' or 'b'.\n")
+}
+```
+
+## 4. Download the dataset of interest
+
+**Connect to the Server where the dataset is located**
+
+The dataset will be downloaded for the assigned variable and years and stored in the pre-determined directory on your local computer.
+
+```{r}
+# Extract 'link' column from filtered data frame
+links_list <- filtered_df$link
+
+# Define the path for storing downloaded NetCDF files
+nc_path <- file.path(temp_wd, "nc_files")
+
+# Create the directory if it doesn't exist
+if (!dir.exists(nc_path)) {
+  dir.create(nc_path)
+}
+
+# Loop over the links to download the NetCDF files
+for (link in links_list) {
+  file_name <- basename(link)  # Extract file name from the link
+  download_path <- file.path(nc_path, file_name)  # Set download path
+  
+  # Execute the curl command to download the file
+  system(paste("curl -# -o", download_path, link))  
+  
+  # Pause for 5 seconds between downloads
+  Sys.sleep(5)
+  
+  # Check if the file was downloaded successfully
+  if (file.exists(download_path)) {
+    cat("Download successful:", file_name, "\n")
+  } else {
+    cat("Download failed for:", file_name, "\n")
+  }
+  
+  cat("\014")  # Clears the console for better visibility between requests
+}
+
+# Final confirmation message after all downloads are attempted
+cat("Download complete. All files have been attempted and saved to:", nc_files, "\n")
+
+```
+
+## 5. Preprocessing of NetCDF dataset
+
+If you are interested in preprocessing the data for a shapefile, please run the chunks i and ii from section 5.1. If you are interested in a CSV file, please run section 5.2.
+
+After running the following chunks, the results will be stored in a folder called 'results' within your specified working directory.
+
+### 5.1. CSV with coordinates
+
+#### i. Average daily values for the list of coordinates of interest
+
+```{r}
+
+# Create folder to store output data
+results_csv_path <- file.path(temp_wd, "results_csv")
+if (!dir.exists(results_csv_path)) {
+  dir.create(results_csv_path)
+}
+
+# Ensure id from set of coordinates
+coord_df$id <- seq_len(nrow(coord_df))
+
+# List all NetCDF files in the directory
+nc_files <- list.files(path = file.path(nc_path), pattern = "\\.nc$", full.names = TRUE)
+
+# Group files by climate forcing
+grouped_nc_files <- split(nc_files, sapply(nc_files, function(file) {
+  file_name <- basename(file)
+  if (variable == "potevap") {
+    climate_forcing <- sub("^watergap2-2e_([^_]+)_.*", "\\1", file_name)  # Custom extraction for 'potevap'
+  } else {
+    climate_forcing <- sub("^(.*?)_.*", "\\1", file_name)  # Default extraction for other variables
+  }
+  return(climate_forcing)
+}))
+
+# Loop over each climate forcing group
+for (forcing_group in names(grouped_nc_files)) {
+  
+  files_to_process <- grouped_nc_files[[forcing_group]]
+  
+  # Loop over each coordinate set
+  for (i in 1:nrow(coord_df)) {
+    
+    lat <- coord_df$lat[i]
+    lon <- coord_df$lon[i]
+    
+    # Initialize empty data frame to store all extracted data
+    extracted_data <- data.frame()
+    
+    # Loop through NetCDF files
+    for (file in files_to_process) {
+      
+      file_name <- basename(file)
+      
+      # Extract scenario
+      climate_scenario <- sub(".*_w5e5_(.*?)_.*", "\\1", file_name)
+      
+      # Open NetCDF file
+      nc_file <- nc_open(file)
+      variable_name <- names(nc_file$var)[1]  # Extract variable name
+      
+      # Extract metadata
+      unit <- nc_file[["var"]][[variable_name]][["units"]]
+      variable_description <- nc_file[["var"]][[variable_name]][["longname"]]
+      
+      # Extract time
+      time_values <- nc_file$dim$time$vals
+      time_units <- nc_file$dim$time$units
+      reference_time <- as.POSIXct(gsub("days since ", "", time_units), format = "%Y-%m-%d %H:%M:%S")
+      date_series <- as.Date(reference_time + (time_values + 1) * 86400)
+      
+      # Extract lat/lon indices
+      lat_vals <- nc_file$dim$lat$vals
+      lon_vals <- nc_file$dim$lon$vals
+      closest_lat_index <- which.min(abs(lat_vals - lat))
+      closest_lon_index <- which.min(abs(lon_vals - lon))
+      
+      # Extract data
+      extracted_values <- ncvar_get(nc_file, variable_name, start = c(closest_lon_index, closest_lat_index, 1), 
+                                    count = c(1, 1, -1))
+      if (variable_name == "pr" | variable_name == "potevap") {
+        extracted_values <- extracted_values * 86400  # Units conversion: mm day-1
+        unit <- "mm day-1"
+      }
+      extracted_values <- round(as.vector(extracted_values), 4)
+      
+      nc_close(nc_file)
+      
+      # Create data frame and store scenario data
+      temp_data <- data.frame(date = date_series, 
+                              value = extracted_values, 
+                              scenario = climate_scenario)
+      
+      # Append to results data frame
+      extracted_data <- rbind(extracted_data, temp_data)
+      
+      print(paste0("Results extracted: ", file_name))
+      
+    }
+    
+    # Reshape data to have separate columns for SSP scenarios
+    final_data <- spread(extracted_data, key = scenario, value = value)
+    
+    # Rename columns for clarity
+    colnames(final_data) <- gsub("ssp", "SSP_", colnames(final_data))
+    
+    # Construct output file path
+    output_filepath <- file.path(results_csv_path, 
+                                 paste0("id_", coord_df$id[i], "_climate_forcing_", 
+                                        forcing_group, "_daily_", variable_name, ".txt"))
+    
+    # Open connection for writing
+    con <- file(output_filepath, 'w')
+    
+    # Write metadata
+    cat(file = con, sprintf("# Repository    :\t%s\n", "https://data.isimip.org/search/tree/ISIMIP3b/"))
+    cat(file = con, sprintf("# Climate forcing           :\t%s\n", forcing_group))
+    cat(file = con, sprintf("# Variable      :\t%s\n", variable_description))
+    cat(file = con, sprintf("# Units         :\t%s\n", unit))
+    cat(file = con, sprintf("# Latitude      :\t%s\n", lat))
+    cat(file = con, sprintf("# Longitude     :\t%s\n\n", lon))
+    
+    # Write final data table (date, SSP_126, SSP_370, SSP_585)
+    write.table(final_data, file = con, sep = '\t', dec = '.', row.names = FALSE, quote = FALSE, na = "NA")
+    
+    close(con)
+    
+    print(paste0("Results saved: ", output_filepath))
+    
+    cat("\014")  # Clears the console for better visibility between requests
+    
+  }
+}
+```
