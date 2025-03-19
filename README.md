@@ -16,7 +16,7 @@ The Rmd scripts are dynamic documents that combine narrative text with code chun
 1. Setting paths and directories.
 2. Defining variables and the time window of interest.
 3. Downloading the datasets of interest.
-4. Preprocessing the NetCDF files for either a shapefile or a list of coordinates.
+4. Preprocessing the NetCDF files for a list of coordinates.
 
 ## About R and RStudio
 
